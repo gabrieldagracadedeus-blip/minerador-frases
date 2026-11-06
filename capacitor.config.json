@@ -1,0 +1,7 @@
+{
+  "appId": "com.tem.minerador",
+  "appName": "Minerador de Frases",
+  "webDir": "www",
+  "android": { "allowMixedContent": false },
+  "backgroundColor": "#15122e"
+}
