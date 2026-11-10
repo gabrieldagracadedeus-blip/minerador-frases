@@ -332,6 +332,127 @@ public class AnkiPlugin extends Plugin {
         });
     }
 
+    private Map<Long, String[]> modelFields(ContentResolver cr, Map<Long, String> names) {
+        Map<Long, String[]> out = new HashMap<Long, String[]>();
+        Cursor c = cr.query(uri("models"), null, null, null, null);
+        if (c != null) {
+            try {
+                int iId = c.getColumnIndex("_id"), iName = c.getColumnIndex("name"), iF = c.getColumnIndex("field_names");
+                while (c.moveToNext()) {
+                    String raw = iF >= 0 ? c.getString(iF) : null;
+                    out.put(c.getLong(iId), raw == null ? new String[0] : raw.split(SEP, -1));
+                    if (iName >= 0) names.put(c.getLong(iId), c.getString(iName));
+                }
+            } finally {
+                c.close();
+            }
+        }
+        return out;
+    }
+
+    private int col(Cursor c, String a, String b) {
+        int i = c.getColumnIndex(a);
+        return i >= 0 ? i : c.getColumnIndex(b);
+    }
+
+    /**
+     * Cartoes que o AnkiDroid manda revisar agora (mesma ordem e limites do Anki).
+     * deck = nome do baralho (opcional), limit = quantos pegar.
+     */
+    @PluginMethod
+    public void due(final PluginCall call) {
+        final String deck = call.getString("deck", "");
+        final int limit = call.getInt("limit", 50);
+        background(call, new Job() {
+            @Override
+            public void run() throws Exception {
+                ContentResolver cr = getContext().getContentResolver();
+                String sel = "limit=?";
+                String[] args;
+                if (deck != null && !deck.trim().isEmpty()) {
+                    sel = "limit=?,deckID=?";
+                    args = new String[] { String.valueOf(limit), String.valueOf(deckId(cr, deck)) };
+                } else {
+                    args = new String[] { String.valueOf(limit) };
+                }
+                Map<Long, String> mnames = new HashMap<Long, String>();
+                Map<Long, String[]> mf = modelFields(cr, mnames);
+                JSArray out = new JSArray();
+                Cursor c = cr.query(uri("schedule"), null, sel, args, null);
+                if (c != null) {
+                    try {
+                        int iNote = col(c, "note_id", "noteId"), iOrd = col(c, "ord", "card_ord"), iBtn = c.getColumnIndex("button_count"), iNext = c.getColumnIndex("next_review_times");
+                        while (c.moveToNext()) {
+                            long nid = c.getLong(iNote);
+                            JSObject o = new JSObject();
+                            o.put("noteId", String.valueOf(nid));
+                            o.put("ord", iOrd >= 0 ? c.getInt(iOrd) : 0);
+                            o.put("buttons", iBtn >= 0 ? c.getInt(iBtn) : 4);
+                            JSArray times = new JSArray();
+                            if (iNext >= 0 && c.getString(iNext) != null) {
+                                String raw = c.getString(iNext);
+                                try {
+                                    org.json.JSONArray ja = new org.json.JSONArray(raw);
+                                    for (int k = 0; k < ja.length(); k++) times.put(String.valueOf(ja.get(k)));
+                                } catch (Exception e) {
+                                    for (String t : raw.replace("[", "").replace("]", "").replace("\"", "").split(",")) times.put(t.trim());
+                                }
+                            }
+                            o.put("times", times);
+                            Cursor n = cr.query(uri("notes/" + nid), new String[] { "mid", "flds", "tags" }, null, null, null);
+                            if (n != null) {
+                                try {
+                                    if (n.moveToFirst()) {
+                                        long mid = n.getLong(0);
+                                        String[] names = mf.get(mid);
+                                        String[] vals = n.getString(1) == null ? new String[0] : n.getString(1).split(SEP, -1);
+                                        JSObject f = new JSObject();
+                                        for (int k = 0; k < vals.length; k++) f.put(names != null && k < names.length ? names[k] : ("f" + k), vals[k]);
+                                        o.put("fields", f);
+                                        o.put("model", mnames.get(mid));
+                                    }
+                                } finally {
+                                    n.close();
+                                }
+                            }
+                            out.put(o);
+                        }
+                    } finally {
+                        c.close();
+                    }
+                }
+                JSObject r = new JSObject();
+                r.put("cards", out);
+                call.resolve(r);
+            }
+        });
+    }
+
+    /** Responde um cartao no AnkiDroid. ease: 1 = De novo, 2..4 = os outros botoes do Anki. */
+    @PluginMethod
+    public void answer(final PluginCall call) {
+        final String noteId = call.getString("noteId");
+        final int ord = call.getInt("ord", 0);
+        final int ease = call.getInt("ease", 3);
+        final long ms = call.getInt("ms", 8000);
+        background(call, new Job() {
+            @Override
+            public void run() throws Exception {
+                if (noteId == null) throw new Exception("cartao nao informado");
+                ContentResolver cr = getContext().getContentResolver();
+                ContentValues v = new ContentValues();
+                v.put("note_id", Long.parseLong(noteId));
+                v.put("ord", ord);
+                v.put("answer_ease", ease);
+                v.put("time_taken", ms);
+                int n = cr.update(uri("schedule"), v, null, null);
+                JSObject r = new JSObject();
+                r.put("updated", n);
+                call.resolve(r);
+            }
+        });
+    }
+
     private long deckId(ContentResolver cr, String name) throws Exception {
         Cursor d = cr.query(uri("decks"), null, null, null, null);
         if (d != null) {
