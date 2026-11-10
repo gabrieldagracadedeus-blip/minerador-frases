@@ -448,6 +448,7 @@ public class AnkiPlugin extends Plugin {
                 int n = cr.update(uri("schedule"), v, null, null);
                 JSObject r = new JSObject();
                 r.put("updated", n);
+                r.put("verified", matches(cr, "nid:" + noteId + " rated:1:" + ease));
                 call.resolve(r);
             }
         });
