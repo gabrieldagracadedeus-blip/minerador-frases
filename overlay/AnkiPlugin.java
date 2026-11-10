@@ -181,6 +181,7 @@ public class AnkiPlugin extends Plugin {
     @PluginMethod
     public void words(final PluginCall call) {
         final String field = call.getString("field", "Target Word");
+        final String sfield = call.getString("sentField", "Sentence");
         final int matureDays = call.getInt("matureDays", 21);
         final int againDays = call.getInt("againDays", 7);
         background(call, new Job() {
@@ -188,6 +189,7 @@ public class AnkiPlugin extends Plugin {
             public void run() throws Exception {
                 ContentResolver cr = getContext().getContentResolver();
                 Map<Long, Integer> idx = new HashMap<Long, Integer>();
+                Map<Long, Integer> sidx = new HashMap<Long, Integer>();
                 Cursor c = cr.query(uri("models"), null, null, null, null);
                 if (c != null) {
                     try {
@@ -202,6 +204,12 @@ public class AnkiPlugin extends Plugin {
                                     break;
                                 }
                             }
+                            for (int i = 0; i < fs.length; i++) {
+                                if (fs[i].trim().equalsIgnoreCase(sfield.trim())) {
+                                    sidx.put(c.getLong(iId), i);
+                                    break;
+                                }
+                            }
                         }
                     } finally {
                         c.close();
@@ -209,7 +217,9 @@ public class AnkiPlugin extends Plugin {
                 }
                 JSArray ids = new JSArray();
                 JSArray words = new JSArray();
+                JSArray sents = new JSArray();
                 for (Map.Entry<Long, Integer> e : idx.entrySet()) {
+                    Integer si = sidx.get(e.getKey());
                     Cursor n = cr.query(uri("notes"), new String[] { "_id", "flds" }, "mid:" + e.getKey(), null, null);
                     if (n == null) continue;
                     try {
@@ -222,8 +232,11 @@ public class AnkiPlugin extends Plugin {
                             String w = parts[i];
                             if (w == null || w.trim().isEmpty()) continue;
                             if (w.length() > 200) w = w.substring(0, 200);
+                            String sv = (si != null && si < parts.length && parts[si] != null) ? parts[si] : "";
+                            if (sv.length() > 400) sv = sv.substring(0, 400);
                             ids.put(String.valueOf(n.getLong(0)));
                             words.put(w);
+                            sents.put(sv);
                         }
                     } finally {
                         n.close();
@@ -232,6 +245,7 @@ public class AnkiPlugin extends Plugin {
                 JSObject r = new JSObject();
                 r.put("ids", ids);
                 r.put("words", words);
+                r.put("sents", sents);
                 r.put("mature", idsFor(cr, "prop:ivl>=" + matureDays));
                 r.put("again", idsFor(cr, "rated:" + againDays + ":1"));
                 r.put("models", idx.size());
