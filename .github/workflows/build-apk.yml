@@ -27,8 +27,13 @@ jobs:
       - name: Criar projeto Android
         run: npx cap add android
 
-      - name: Aplicar ajustes do app
-        run: cp overlay/MainActivity.java android/app/src/main/java/com/tem/minerador/MainActivity.java
+      - name: Aplicar ajustes do app (tela cheia, AnkiDroid)
+        run: |
+          cp overlay/MainActivity.java android/app/src/main/java/com/tem/minerador/MainActivity.java
+          cp overlay/AnkiPlugin.java android/app/src/main/java/com/tem/minerador/AnkiPlugin.java
+          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's#<!-- Permissions -->#<uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />\n    <queries><package android:name="com.ichi2.anki" /></queries>#' android/app/src/main/AndroidManifest.xml
+          grep -q "com.ichi2.anki.permission.READ_WRITE_DATABASE" android/app/src/main/AndroidManifest.xml
 
       - name: Copiar o app para o projeto
         run: npx cap sync android
