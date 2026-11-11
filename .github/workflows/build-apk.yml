@@ -38,6 +38,11 @@ jobs:
       - name: Copiar o app para o projeto
         run: npx cap sync android
 
+      - name: Usar sempre a mesma assinatura (atualiza sem desinstalar)
+        run: |
+          mkdir -p ~/.android
+          cp overlay/debug.keystore ~/.android/debug.keystore
+
       - name: Compilar
         working-directory: android
         run: |
