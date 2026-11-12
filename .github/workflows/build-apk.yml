@@ -49,10 +49,20 @@ jobs:
                   debug { signingConfig signingConfigs.fixo }
                   release { signingConfig signingConfigs.fixo }
               }
+              defaultConfig {
+                  ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+              }
+              packagingOptions {
+                  jniLibs { useLegacyPackaging true }
+              }
+          }
+          dependencies {
+              implementation 'org.videolan.android:libvlc-all:3.5.1'
           }
           EOF2
           cp overlay/MainActivity.java android/app/src/main/java/com/tem/minerador/MainActivity.java
           cp overlay/AnkiPlugin.java android/app/src/main/java/com/tem/minerador/AnkiPlugin.java
+          cp overlay/VlcPlugin.java android/app/src/main/java/com/tem/minerador/VlcPlugin.java
           sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
           sed -i 's#<!-- Permissions -->#<uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />\n    <queries><package android:name="com.ichi2.anki" /></queries>#' android/app/src/main/AndroidManifest.xml
           grep -q "com.ichi2.anki.permission.READ_WRITE_DATABASE" android/app/src/main/AndroidManifest.xml
