@@ -27,8 +27,30 @@ jobs:
       - name: Criar projeto Android
         run: npx cap add android
 
-      - name: Aplicar ajustes do app (tela cheia, AnkiDroid)
+      - name: Aplicar ajustes do app (tela cheia, AnkiDroid, versao, assinatura fixa)
         run: |
+          test -f overlay/debug.keystore || { echo "::error::Falta o arquivo overlay/debug.keystore no GitHub. Sem ele o app nao atualiza por cima."; exit 1; }
+          cp overlay/debug.keystore android/app/fixo.keystore
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+          grep -q "versionCode ${{ github.run_number }}" android/app/build.gradle
+          cat >> android/app/build.gradle <<'EOF2'
+
+          android {
+              signingConfigs {
+                  fixo {
+                      storeFile file('fixo.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  debug { signingConfig signingConfigs.fixo }
+                  release { signingConfig signingConfigs.fixo }
+              }
+          }
+          EOF2
           cp overlay/MainActivity.java android/app/src/main/java/com/tem/minerador/MainActivity.java
           cp overlay/AnkiPlugin.java android/app/src/main/java/com/tem/minerador/AnkiPlugin.java
           sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
@@ -49,8 +71,16 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
+      - name: Conferir a assinatura (tem que ser sempre a mesma)
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | tee cert.txt
+          grep -qi "SHA-256 digest: 1ea6d3cb52a16ffb4b83b422d54a350db51fe05f501c1283c9b935f949010947" cert.txt || { echo "::error::A assinatura do APK nao e a fixa. Confira se o overlay/debug.keystore e o mesmo que foi enviado."; exit 1; }
+          echo "Versao 1.${{ github.run_number }} assinada com a chave fixa."
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Minerador-APK
+          name: Minerador-APK-v1.${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
