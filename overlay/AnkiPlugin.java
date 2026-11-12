@@ -346,6 +346,67 @@ public class AnkiPlugin extends Plugin {
         });
     }
 
+    /** Apaga a nota do AnkiDroid. Se o AnkiDroid nao deixar, poe a etiqueta "apagar" para apagar no Anki. */
+    @PluginMethod
+    public void deleteNote(final PluginCall call) {
+        final String noteId = call.getString("noteId");
+        background(call, new Job() {
+            @Override
+            public void run() throws Exception {
+                if (noteId == null) throw new Exception("cartao nao informado");
+                long id = Long.parseLong(noteId);
+                ContentResolver cr = getContext().getContentResolver();
+                String err = "";
+                int n = 0;
+                try {
+                    n = cr.delete(uri("notes/" + id), null, null);
+                } catch (Exception e) {
+                    err = String.valueOf(e.getMessage());
+                }
+                boolean gone = false;
+                try {
+                    Cursor c = cr.query(uri("notes/" + id), new String[] { "_id" }, null, null, null);
+                    if (c == null) gone = true;
+                    else {
+                        try {
+                            gone = !c.moveToFirst();
+                        } finally {
+                            c.close();
+                        }
+                    }
+                } catch (Exception e) {
+                    gone = n > 0;
+                }
+                boolean tagged = false;
+                if (!gone) {
+                    try {
+                        String tags = "";
+                        Cursor c = cr.query(uri("notes/" + id), new String[] { "tags" }, null, null, null);
+                        if (c != null) {
+                            try {
+                                if (c.moveToFirst() && c.getString(0) != null) tags = c.getString(0).trim();
+                            } finally {
+                                c.close();
+                            }
+                        }
+                        if (!(" " + tags + " ").contains(" apagar ")) {
+                            ContentValues v = new ContentValues();
+                            v.put("tags", (tags + " apagar").trim());
+                            tagged = cr.update(uri("notes/" + id), v, null, null) > 0;
+                        } else tagged = true;
+                    } catch (Exception e) {
+                        if (err.isEmpty()) err = String.valueOf(e.getMessage());
+                    }
+                }
+                JSObject r = new JSObject();
+                r.put("deleted", gone);
+                r.put("tagged", tagged);
+                r.put("error", err);
+                call.resolve(r);
+            }
+        });
+    }
+
     private Map<Long, String[]> modelFields(ContentResolver cr, Map<Long, String> names) {
         Map<Long, String[]> out = new HashMap<Long, String[]>();
         Cursor c = cr.query(uri("models"), null, null, null, null);
