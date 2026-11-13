@@ -8,6 +8,13 @@ import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.net.Uri;
 import android.util.Base64;
+import android.app.Activity;
+import android.content.SharedPreferences;
+import android.provider.DocumentsContract;
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.annotation.ActivityCallback;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import androidx.core.content.FileProvider;
 
@@ -402,6 +409,157 @@ public class AnkiPlugin extends Plugin {
                 r.put("deleted", gone);
                 r.put("tagged", tagged);
                 r.put("error", err);
+                call.resolve(r);
+            }
+        });
+    }
+
+    /* ---------- midia dos cartoes (audio e imagem) pela pasta do AnkiDroid liberada uma vez ---------- */
+    private Map<String, String> mediaIdx = null;
+    private String mediaDir = null;
+
+    private SharedPreferences mp() {
+        return getContext().getSharedPreferences("anki-media", Context.MODE_PRIVATE);
+    }
+
+    @PluginMethod
+    public void mediaPick(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:AnkiDroid"));
+        } catch (Exception e) {
+            // ignora
+        }
+        startActivityForResult(call, i, "mediaPicked");
+    }
+
+    @ActivityCallback
+    private void mediaPicked(PluginCall call, ActivityResult res) {
+        if (call == null) return;
+        Intent d = res.getData();
+        if (res.getResultCode() != Activity.RESULT_OK || d == null || d.getData() == null) {
+            call.reject("nenhuma pasta escolhida");
+            return;
+        }
+        Uri tree = d.getData();
+        try {
+            getContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception e) {
+            // segue mesmo sem permissao permanente
+        }
+        mp().edit().putString("tree", tree.toString()).apply();
+        mediaIdx = null;
+        mediaDir = null;
+        final PluginCall c = call;
+        background(c, new Job() {
+            @Override
+            public void run() throws Exception {
+                int n = indexMedia();
+                JSObject r = new JSObject();
+                r.put("files", n);
+                r.put("ok", n > 0);
+                c.resolve(r);
+            }
+        });
+    }
+
+    private Cursor children(Uri tree, String docId) {
+        Uri ch = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
+        return getContext().getContentResolver().query(ch, new String[] { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE }, null, null, null);
+    }
+
+    /** acha a pasta collection.media (na pasta escolhida ou dentro dela) e lista os arquivos */
+    private synchronized int indexMedia() throws Exception {
+        String t = mp().getString("tree", null);
+        if (t == null) return 0;
+        Uri tree = Uri.parse(t);
+        String root = DocumentsContract.getTreeDocumentId(tree);
+        String dir = null;
+        if (root.endsWith("collection.media")) dir = root;
+        if (dir == null) {
+            Cursor c = children(tree, root);
+            if (c != null) {
+                try {
+                    while (c.moveToNext()) {
+                        if ("collection.media".equals(c.getString(1))) {
+                            dir = c.getString(0);
+                            break;
+                        }
+                    }
+                } finally {
+                    c.close();
+                }
+            }
+        }
+        if (dir == null) dir = root;
+        Map<String, String> idx = new HashMap<>();
+        Cursor c = children(tree, dir);
+        if (c != null) {
+            try {
+                while (c.moveToNext()) {
+                    String mime = c.getString(2);
+                    if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) continue;
+                    idx.put(c.getString(1), c.getString(0));
+                }
+            } finally {
+                c.close();
+            }
+        }
+        mediaDir = dir;
+        mediaIdx = idx;
+        return idx.size();
+    }
+
+    @PluginMethod
+    public void mediaInfo(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("granted", mp().getString("tree", null) != null);
+        call.resolve(r);
+    }
+
+    /** devolve um arquivo de midia do Anki em base64 */
+    @PluginMethod
+    public void media(final PluginCall call) {
+        final String name = call.getString("name");
+        background(call, new Job() {
+            @Override
+            public void run() throws Exception {
+                JSObject r = new JSObject();
+                String t = mp().getString("tree", null);
+                if (t == null || name == null) {
+                    r.put("need", t == null);
+                    call.resolve(r);
+                    return;
+                }
+                if (mediaIdx == null) indexMedia();
+                String id = mediaIdx.get(name);
+                if (id == null) {
+                    indexMedia();
+                    id = mediaIdx.get(name);
+                }
+                if (id == null) {
+                    r.put("missing", true);
+                    r.put("files", mediaIdx.size());
+                    call.resolve(r);
+                    return;
+                }
+                Uri u = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(t), id);
+                InputStream in = getContext().getContentResolver().openInputStream(u);
+                if (in == null) throw new Exception("nao consegui abrir " + name);
+                ByteArrayOutputStream os = new ByteArrayOutputStream();
+                byte[] buf = new byte[65536];
+                int n, tot = 0;
+                try {
+                    while ((n = in.read(buf)) > 0) {
+                        os.write(buf, 0, n);
+                        tot += n;
+                        if (tot > 12 * 1024 * 1024) throw new Exception("arquivo grande demais");
+                    }
+                } finally {
+                    in.close();
+                }
+                r.put("data", Base64.encodeToString(os.toByteArray(), Base64.NO_WRAP));
                 call.resolve(r);
             }
         });
